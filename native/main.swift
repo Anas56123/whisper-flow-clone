@@ -53,7 +53,7 @@ final class HUDPanel: NSPanel {
     private let waveform = WaveformView()
     private let textLabel = NSTextField(wrappingLabelWithString: "")
     private let dot = NSView()
-    private let hintLabel = NSTextField(labelWithString: "⌃⌥Space to finish · ⌃⌥L language · text lands in the focused field")
+    private let hintLabel = NSTextField(labelWithString: "⌃⌥Space to finish · ⌥L language · Esc to cancel")
 
     init() {
         super.init(
@@ -232,6 +232,17 @@ final class DictationController {
         }
     }
 
+    /// Immediate teardown, discarding any transcript (Esc / cancel path).
+    func cancel() {
+        engine.inputNode.removeTap(onBus: 0)
+        engine.stop()
+        request?.endAudio()
+        task?.cancel()
+        task = nil
+        request = nil
+        bestTranscript = ""
+    }
+
     /// Stops capture; recognizer gets a short grace period to finalize, then completion fires with the best text.
     func stop(completion: @escaping (String) -> Void) {
         engine.inputNode.removeTap(onBus: 0)
@@ -311,6 +322,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var langToggleMenuItem: NSMenuItem!
     private var langMenu: NSMenu!
     private var langHotKeyRef: EventHotKeyRef?
+    private var escHotKeyRef: EventHotKeyRef?
+    private static let hotKeySignature = OSType(0x57464C57) /* "WFLW" */
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupStatusItem()
@@ -341,7 +354,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(.separator())
 
         langToggleMenuItem = NSMenuItem(title: "", action: #selector(toggleLanguage), keyEquivalent: "l")
-        langToggleMenuItem.keyEquivalentModifierMask = [.control, .option]
+        langToggleMenuItem.keyEquivalentModifierMask = [.option]
         langToggleMenuItem.target = self
         menu.addItem(langToggleMenuItem)
 
@@ -440,29 +453,50 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 switch hotKeyID.id {
                 case 1: delegate.toggleDictation()
                 case 2: delegate.toggleLanguage()
+                case 3: delegate.cancelDictation()
                 default: break
                 }
             }
             return noErr
         }, 1, &eventType, Unmanaged.passUnretained(self).toOpaque(), nil)
 
-        let signature = OSType(0x57464C57) /* "WFLW" */
         RegisterEventHotKey(
             UInt32(kVK_Space),
             UInt32(controlKey | optionKey),
-            EventHotKeyID(signature: signature, id: 1),
+            EventHotKeyID(signature: Self.hotKeySignature, id: 1),
             GetEventDispatcherTarget(),
             0,
             &hotKeyRef
         )
         RegisterEventHotKey(
             UInt32(kVK_ANSI_L),
-            UInt32(controlKey | optionKey),
-            EventHotKeyID(signature: signature, id: 2),
+            UInt32(optionKey),
+            EventHotKeyID(signature: Self.hotKeySignature, id: 2),
             GetEventDispatcherTarget(),
             0,
             &langHotKeyRef
         )
+    }
+
+    /// Esc is only claimed while dictating — a permanent global Esc hotkey
+    /// would swallow Escape for every app on the system.
+    private func registerEscHotKey() {
+        guard escHotKeyRef == nil else { return }
+        RegisterEventHotKey(
+            UInt32(kVK_Escape),
+            0,
+            EventHotKeyID(signature: Self.hotKeySignature, id: 3),
+            GetEventDispatcherTarget(),
+            0,
+            &escHotKeyRef
+        )
+    }
+
+    private func unregisterEscHotKey() {
+        if let ref = escHotKeyRef {
+            UnregisterEventHotKey(ref)
+            escHotKeyRef = nil
+        }
     }
 
     // MARK: record / insert
@@ -485,13 +519,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         committedText = ""
         setIcon(recording: true)
         toggleMenuItem.title = "Stop Dictation & Insert"
+        registerEscHotKey()
         hud.present()
+    }
+
+    /// Esc: discard everything, no insertion.
+    @objc func cancelDictation() {
+        guard recording else { return }
+        recording = false
+        committedText = ""
+        setIcon(recording: false)
+        toggleMenuItem.title = "Start Dictation"
+        unregisterEscHotKey()
+        dictation.cancel()
+        hud.dismiss()
     }
 
     private func stopAndInsert() {
         recording = false
         setIcon(recording: false)
         toggleMenuItem.title = "Start Dictation"
+        unregisterEscHotKey()
         dictation.stop { [weak self] text in
             guard let self else { return }
             self.hud.dismiss()

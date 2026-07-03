@@ -24,7 +24,8 @@ Web app (window-level):
 Native menu-bar app (OS-global, build with `native/build.sh`):
 
 - `⌃⌥ Space` — start/stop dictation (text lands in the focused field)
-- `⌃⌥ L` — switch language English ↔ Arabic (works mid-dictation)
+- `⌥ L` — switch language English ↔ Arabic (works mid-dictation)
+- `Esc` — cancel dictation, discard text (only captured while dictating)
 
 ## Architecture
 
