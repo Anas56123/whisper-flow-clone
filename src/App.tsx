@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { useRecorder } from "./hooks/useRecorder";
 import { useHotkey } from "./hooks/useHotkey";
@@ -20,7 +20,20 @@ export default function App() {
   const rec = useRecorder(settings.deviceId, settings.language);
   const recording = rec.state === "recording";
 
-  useHotkey(rec.toggle, rec.stop);
+  // ⌥L flips to Arabic and back — remembers the last non-Arabic language
+  // so e.g. Français → العربية → Français round-trips.
+  const lastNonArabic = useRef("en-US");
+  const toggleLanguage = useCallback(() => {
+    setSettings((s) => {
+      if (s.language.startsWith("ar")) {
+        return { ...s, language: lastNonArabic.current };
+      }
+      lastNonArabic.current = s.language;
+      return { ...s, language: "ar-SA" };
+    });
+  }, []);
+
+  useHotkey(rec.toggle, rec.stop, toggleLanguage);
 
   return (
     <div className="flex h-full items-center justify-center bg-[#0b0b0c]">
@@ -42,6 +55,14 @@ export default function App() {
             <h1 className="text-[13px] font-semibold tracking-tight">
               Whisper Flow
             </h1>
+            <button
+              onClick={toggleLanguage}
+              aria-label="Toggle transcription language (⌥L)"
+              title="Toggle language (⌥L)"
+              className="rounded-md border border-neutral-800 bg-[#0e0e10] px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-[#71717A] transition-colors hover:border-neutral-700 hover:text-neutral-200"
+            >
+              {settings.language.startsWith("ar") ? "ع AR" : settings.language.split("-")[0]}
+            </button>
           </div>
           <SettingsPanel
             settings={settings}
@@ -103,7 +124,7 @@ export default function App() {
           <kbd className="rounded-md border border-neutral-800 bg-[#0e0e10] px-1.5 py-0.5 font-sans">
             Space
           </kbd>
-          <span>to toggle · Esc to stop</span>
+          <span>to toggle · ⌥L language · Esc to stop</span>
         </footer>
       </motion.main>
     </div>

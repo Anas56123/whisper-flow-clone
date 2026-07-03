@@ -16,6 +16,7 @@ Web Speech API; Firefox has no support and falls back to waveform-only).
 ## Shortcuts
 
 - `⌥ Space` — toggle recording (window-level)
+- `⌥ L` — switch transcription language English ↔ Arabic (works mid-recording)
 - `Esc` — stop
 
 ## Architecture

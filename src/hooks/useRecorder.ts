@@ -154,6 +154,20 @@ export function useRecorder(deviceId: string, language: string): Recorder {
     setInterim("");
   }, []);
 
+  // Language switched mid-recording: update lang and stop — the onend
+  // auto-restart picks up the new language without dropping the mic stream.
+  useEffect(() => {
+    const rec = recognitionRef.current;
+    if (rec && recordingRef.current) {
+      rec.lang = language;
+      try {
+        rec.stop();
+      } catch {
+        /* already stopped */
+      }
+    }
+  }, [language]);
+
   useEffect(() => teardown, [teardown]);
 
   return { state, transcript, interim, analyser, elapsed, toggle, stop, clear };
