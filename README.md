@@ -15,9 +15,16 @@ Web Speech API; Firefox has no support and falls back to waveform-only).
 
 ## Shortcuts
 
-- `⌥ Space` — toggle recording (window-level)
+Web app (window-level):
+
+- `⌥ Space` — toggle recording
 - `⌥ L` — switch transcription language English ↔ Arabic (works mid-recording)
 - `Esc` — stop
+
+Native menu-bar app (OS-global, build with `native/build.sh`):
+
+- `⌃⌥ Space` — start/stop dictation (text lands in the focused field)
+- `⌃⌥ L` — switch language English ↔ Arabic (works mid-dictation)
 
 ## Architecture
 

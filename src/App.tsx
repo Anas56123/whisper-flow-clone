@@ -21,7 +21,7 @@ export default function App() {
   const recording = rec.state === "recording";
 
   // ⌥L flips to Arabic and back — remembers the last non-Arabic language
-  // so e.g. Français → العربية → Français round-trips.
+  // so e.g. Deutsch → العربية → Deutsch round-trips.
   const lastNonArabic = useRef("en-US");
   const toggleLanguage = useCallback(() => {
     setSettings((s) => {

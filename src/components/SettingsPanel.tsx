@@ -10,7 +10,6 @@ export interface Settings {
 export const LANGUAGES = [
   { value: "en-US", label: "English (US)" },
   { value: "en-GB", label: "English (UK)" },
-  { value: "fr-FR", label: "Français" },
   { value: "de-DE", label: "Deutsch" },
   { value: "es-ES", label: "Español" },
   { value: "ar-SA", label: "العربية (السعودية)" },

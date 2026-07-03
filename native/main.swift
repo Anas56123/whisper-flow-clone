@@ -53,7 +53,7 @@ final class HUDPanel: NSPanel {
     private let waveform = WaveformView()
     private let textLabel = NSTextField(wrappingLabelWithString: "")
     private let dot = NSView()
-    private let hintLabel = NSTextField(labelWithString: "⌃⌥Space to finish · text lands in the focused field")
+    private let hintLabel = NSTextField(labelWithString: "⌃⌥Space to finish · ⌃⌥L language · text lands in the focused field")
 
     init() {
         super.init(
@@ -294,19 +294,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private static let languages: [(id: String, label: String)] = [
         ("en-US", "English (US)"), ("en-GB", "English (UK)"),
-        ("fr-FR", "Français"), ("de-DE", "Deutsch"),
-        ("es-ES", "Español"), ("ar-SA", "العربية"), ("ja-JP", "日本語"),
+        ("de-DE", "Deutsch"), ("es-ES", "Español"),
+        ("ar-SA", "العربية"), ("ja-JP", "日本語"),
     ]
     private var languageID: String {
         get { UserDefaults.standard.string(forKey: "language") ?? "en-US" }
         set { UserDefaults.standard.set(newValue, forKey: "language") }
     }
+    /// Last non-Arabic language, so ⌃⌥L round-trips (e.g. Deutsch → العربية → Deutsch).
+    private var lastNonArabicID: String {
+        get { UserDefaults.standard.string(forKey: "lastNonArabicLanguage") ?? "en-US" }
+        set { UserDefaults.standard.set(newValue, forKey: "lastNonArabicLanguage") }
+    }
+    /// Text finalized before a mid-recording language switch; prepended on insert.
+    private var committedText = ""
+    private var langToggleMenuItem: NSMenuItem!
+    private var langMenu: NSMenu!
+    private var langHotKeyRef: EventHotKeyRef?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupStatusItem()
         registerHotKey()
         dictation.onLevel = { [weak self] in self?.hud.push(level: $0) }
-        dictation.onText = { [weak self] finalText, partial in self?.hud.set(finalText: finalText, partial: partial) }
+        dictation.onText = { [weak self] finalText, partial in
+            guard let self else { return }
+            let shown = [self.committedText, finalText].filter { !$0.isEmpty }.joined(separator: " ")
+            self.hud.set(finalText: shown, partial: partial)
+        }
 
         SFSpeechRecognizer.requestAuthorization { _ in }
         AVCaptureDevice.requestAccess(for: .audio) { _ in }
@@ -326,17 +340,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(toggleMenuItem)
         menu.addItem(.separator())
 
-        let langMenu = NSMenu()
+        langToggleMenuItem = NSMenuItem(title: "", action: #selector(toggleLanguage), keyEquivalent: "l")
+        langToggleMenuItem.keyEquivalentModifierMask = [.control, .option]
+        langToggleMenuItem.target = self
+        menu.addItem(langToggleMenuItem)
+
+        langMenu = NSMenu()
         for lang in Self.languages {
             let item = NSMenuItem(title: lang.label, action: #selector(pickLanguage(_:)), keyEquivalent: "")
             item.representedObject = lang.id
             item.target = self
-            item.state = lang.id == languageID ? .on : .off
             langMenu.addItem(item)
         }
         let langItem = NSMenuItem(title: "Language", action: nil, keyEquivalent: "")
         langItem.submenu = langMenu
         menu.addItem(langItem)
+        refreshLanguageUI()
 
         let axItem = NSMenuItem(title: "Grant Accessibility…", action: #selector(openAccessibilitySettings), keyEquivalent: "")
         axItem.target = self
@@ -356,8 +375,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func pickLanguage(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? String else { return }
+        setLanguage(id)
+    }
+
+    private func refreshLanguageUI() {
+        langMenu.items.forEach { $0.state = ($0.representedObject as? String) == languageID ? .on : .off }
+        langToggleMenuItem.title = languageID.hasPrefix("ar")
+            ? "Switch to English" : "Switch to العربية"
+    }
+
+    private func setLanguage(_ id: String) {
+        if !id.hasPrefix("ar") { lastNonArabicID = id }
         languageID = id
-        sender.menu?.items.forEach { $0.state = ($0 == sender) ? .on : .off }
+        refreshLanguageUI()
+        if recording { restartDictationForLanguageChange() }
+    }
+
+    /// ⌃⌥L: flip between Arabic and the last non-Arabic language.
+    @objc func toggleLanguage() {
+        setLanguage(languageID.hasPrefix("ar") ? lastNonArabicID : "ar-SA")
+    }
+
+    /// Finalize the current segment, then restart recognition in the new
+    /// language without dismissing the HUD; the segment is prepended on insert.
+    private func restartDictationForLanguageChange() {
+        let prefix = committedText
+        dictation.stop { [weak self] text in
+            guard let self, self.recording else { return }
+            self.committedText = [prefix, text]
+                .filter { !$0.isEmpty }
+                .joined(separator: " ")
+            self.hud.set(finalText: self.committedText, partial: "")
+            do {
+                try self.dictation.start(locale: Locale(identifier: self.languageID))
+            } catch {
+                self.stopAndInsert()
+            }
+        }
     }
 
     @objc private func openAccessibilitySettings() {
@@ -369,21 +423,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func registerHotKey() {
         var eventType = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
-        InstallEventHandler(GetEventDispatcherTarget(), { _, _, userData -> OSStatus in
-            guard let userData else { return noErr }
+        InstallEventHandler(GetEventDispatcherTarget(), { _, event, userData -> OSStatus in
+            guard let userData, let event else { return noErr }
+            var hotKeyID = EventHotKeyID()
+            GetEventParameter(
+                event,
+                EventParamName(kEventParamDirectObject),
+                EventParamType(typeEventHotKeyID),
+                nil,
+                MemoryLayout<EventHotKeyID>.size,
+                nil,
+                &hotKeyID
+            )
             let delegate = Unmanaged<AppDelegate>.fromOpaque(userData).takeUnretainedValue()
-            DispatchQueue.main.async { delegate.toggleDictation() }
+            DispatchQueue.main.async {
+                switch hotKeyID.id {
+                case 1: delegate.toggleDictation()
+                case 2: delegate.toggleLanguage()
+                default: break
+                }
+            }
             return noErr
         }, 1, &eventType, Unmanaged.passUnretained(self).toOpaque(), nil)
 
-        let hotKeyID = EventHotKeyID(signature: OSType(0x57464C57) /* "WFLW" */, id: 1)
+        let signature = OSType(0x57464C57) /* "WFLW" */
         RegisterEventHotKey(
             UInt32(kVK_Space),
             UInt32(controlKey | optionKey),
-            hotKeyID,
+            EventHotKeyID(signature: signature, id: 1),
             GetEventDispatcherTarget(),
             0,
             &hotKeyRef
+        )
+        RegisterEventHotKey(
+            UInt32(kVK_ANSI_L),
+            UInt32(controlKey | optionKey),
+            EventHotKeyID(signature: signature, id: 2),
+            GetEventDispatcherTarget(),
+            0,
+            &langHotKeyRef
         )
     }
 
@@ -404,6 +482,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         recording = true
+        committedText = ""
         setIcon(recording: true)
         toggleMenuItem.title = "Stop Dictation & Insert"
         hud.present()
@@ -414,9 +493,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         setIcon(recording: false)
         toggleMenuItem.title = "Start Dictation"
         dictation.stop { [weak self] text in
-            self?.hud.dismiss()
-            guard !text.isEmpty else { return }
-            TextInserter.insert(text)
+            guard let self else { return }
+            self.hud.dismiss()
+            let full = [self.committedText, text].filter { !$0.isEmpty }.joined(separator: " ")
+            self.committedText = ""
+            guard !full.isEmpty else { return }
+            TextInserter.insert(full)
         }
     }
 }
